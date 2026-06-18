@@ -1,0 +1,66 @@
+/* BOQ Extractor – custom styles (Tailwind handles the rest) */
+
+/* Smooth transitions for dark/light toggle */
+*, *::before, *::after { transition-property: background-color, border-color, color; transition-duration: 150ms; }
+
+/* Drag-over highlight */
+.drag-over {
+  border-color: #6366f1 !important;
+  background-color: rgba(99, 102, 241, 0.08) !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background-color: #6366f1; border-radius: 9999px; }
+
+/* Sortable column headers */
+th[data-col] { cursor: pointer; user-select: none; }
+th[data-col]:hover { background-color: rgba(99, 102, 241, 0.12); }
+th[data-col] .sort-icon { display: inline-block; margin-left: 4px; opacity: 0.45; }
+th[data-col].asc  .sort-icon::after { content: ' ↑'; opacity: 1; }
+th[data-col].desc .sort-icon::after { content: ' ↓'; opacity: 1; }
+th[data-col]:not(.asc):not(.desc) .sort-icon::after { content: ' ↕'; }
+
+/* Progress bar animation */
+@keyframes progress-stripe {
+  0%   { background-position: 40px 0; }
+  100% { background-position: 0 0; }
+}
+.progress-bar-animated {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255,255,255,.12) 0px,
+    rgba(255,255,255,.12) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+  background-size: 40px 40px;
+  animation: progress-stripe 0.8s linear infinite;
+}
+
+/* Spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { animation: spin 0.8s linear infinite; }
+
+/* File drop zone pulse when empty */
+@keyframes border-pulse {
+  0%, 100% { border-color: rgba(99, 102, 241, 0.4); }
+  50%       { border-color: rgba(99, 102, 241, 0.9); }
+}
+.dropzone-pulse { animation: border-pulse 2s ease-in-out infinite; }
+
+/* Toast animations */
+@keyframes toast-in  { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes toast-out { from { opacity: 1; } to { opacity: 0; transform: translateX(100%); } }
+.toast-in  { animation: toast-in  0.3s ease-out forwards; }
+.toast-out { animation: toast-out 0.3s ease-in  forwards; }
+
+/* Table row hover */
+tbody tr:hover td { background-color: rgba(99, 102, 241, 0.07) !important; }
+
+/* Input focus ring color */
+input:focus, select:focus { outline: none; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.35); }
+
+/* Responsive table wrapper */
+.table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
