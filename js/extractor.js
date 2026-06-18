@@ -149,6 +149,42 @@
     return s; // unrecognised – return unchanged
   }
 
+  // Scan ANY row (including pre-colMap rows) for a recognizable date value.
+  // Only accepts Date objects, date-like strings, and Excel serials in the
+  // year-2000+ range — avoids false positives from measurement numbers.
+  function extractAnyDate(row) {
+    for (var i = 0; i < row.length; i++) {
+      var v = row[i];
+      if (isBlank(v)) continue;
+
+      if (v instanceof Date) {
+        return isNaN(v.getTime()) ? '' : fmtDate(v);
+      }
+
+      if (typeof v === 'number') {
+        // Only accept Excel serials for 2000-01-01 (36526) through 2099-12-31 (73050)
+        if (v > 36526 && v < 73051) {
+          var dn = excelSerialToDate(v);
+          if (dn) return fmtDate(dn);
+        }
+        continue; // skip ordinary numbers (quantities, item nos, measurements)
+      }
+
+      if (typeof v === 'string') {
+        var str = v.trim();
+        if (!str) continue;
+        // Strip a leading label like "Date:", "Record Date:", etc.
+        str = str.replace(/^(record\s*date|measurement\s*date|meas\s*date|date|dt|dated)\s*[:：]\s*/i, '');
+        // Strip trailing time
+        str = str.replace(/[ T]+\d{1,2}:\d{2}(:\d{2})?(\.\d+)?\s*[Zz]?\s*([AaPp]\.?\s*[Mm]\.?)?\s*$/, '').trim();
+        if (!str) continue;
+        var result = reformatDateString(str);
+        if (/^\d{2}-\d{2}-\d{4}$/.test(result)) return result;
+      }
+    }
+    return '';
+  }
+
   function formatDate(v) {
     if (isBlank(v)) return '';
 
@@ -492,7 +528,13 @@
       }
 
       // Need a table context to interpret the row.
-      if (!colMap) continue;
+      // Before the table header is found, still scan for standalone date rows
+      // (e.g. "Record Date: 15/05/2026" written above the measurement table).
+      if (!colMap) {
+        var earlyDate = extractAnyDate(row);
+        if (earlyDate) lastDate = earlyDate;
+        continue;
+      }
 
       // Resolve the item this row belongs to (column value wins when present).
       var rowItem = currentItem;
@@ -532,6 +574,20 @@
 
       // 6. Section header (descriptive text, no measurements)
       if (!hasDim) {
+        // In real RA Bills, section headers often use merged cells that SheetJS
+        // places in column 0 — but descCol may point to a different column.
+        // Fall back to the first alphabetic text in any non-measurement column.
+        if (!desc) {
+          var skipMeas = {};
+          ['no', 'length', 'breadth', 'depth', 'qty'].forEach(function (k) {
+            if (colMap[k] != null) skipMeas[colMap[k]] = true;
+          });
+          for (var hc = 0; hc < row.length; hc++) {
+            if (skipMeas[hc]) continue;
+            var hv = cleanText(row[hc]);
+            if (hv.length > 2 && /[a-zA-Z]{2,}/.test(hv)) { desc = hv; break; }
+          }
+        }
         if (desc) {
           sectionText += ' ' + desc;
           if (cfg.mode === 'steel') {

@@ -376,6 +376,59 @@ test('converts Excel serial dates (number and numeric string)', function () {
   eq(res.rows[1].RecordDate, '20-05-2025', 'serial string converted');
 });
 
+test('RecordDate from standalone row before table header', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      ['Record Date:', '15-05-2026'],   // pre-header label+date row
+      ['Description', 'No.', 'L', 'B', 'D'],
+      ['Earth Work', 1, 1, 1, 1],
+      ['PCC Work',   1, 1, 1, 1]
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows.length, 2);
+  eq(res.rows[0].RecordDate, '15-05-2026', 'date from pre-header row');
+  eq(res.rows[1].RecordDate, '15-05-2026', 'date carried forward');
+});
+
+test('RecordDate from Date object (SheetJS cellDates:true) before table header', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      [new Date(2026, 4, 15), 'Dated'],   // Date object in first cell
+      ['Description', 'No.', 'L', 'B', 'D'],
+      ['Earth Work', 1, 1, 1, 1]
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows.length, 1);
+  eq(res.rows[0].RecordDate, '15-05-2026', 'Date object in pre-header row');
+});
+
+test('section header in merged cell (col 0) sets pendingHeader for Basic Extract', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      // column layout: Sr(0), Date(1), Description(2), No(3), L(4), B(5), D(6)
+      ['Sr', 'Date', 'Description', 'No.', 'L', 'B', 'D'],
+      // Section header appears as merged cell -> text only in col 0; descCol (2) is null
+      ['RCC WORK', null, null, null, null, null, null],
+      [1, '15-05-2026', 'Column Footing', 4, 0.9, 0.9, 0.5],
+      [2, null,         'Pedestal',        4, 0.45, 0.45, 0.6]
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows.length, 2);
+  eq(res.rows[0].Description, 'RCC WORK - Column Footing', 'merged-cell header applied once');
+  eq(res.rows[1].Description, 'Pedestal',                  'header cleared after first row');
+  eq(res.rows[0].RecordDate, '15-05-2026');
+  eq(res.rows[1].RecordDate, '15-05-2026', 'date carried forward');
+});
+
 // ---------------------------------------------------------------------------
 console.log('\nUnit helpers');
 // ---------------------------------------------------------------------------
