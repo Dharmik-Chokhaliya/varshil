@@ -155,6 +155,79 @@ test('weak item marker ("28  Providing ...") without the word Item', function ()
 });
 
 // ---------------------------------------------------------------------------
+console.log('\nHeader Merge Rule');
+// ---------------------------------------------------------------------------
+
+test('header applies to FIRST data row only (Example 1)', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      ['Description', 'No.', 'L', 'B', 'D'],
+      ['Excavation'],            // header
+      ['Earth Work', 1, 1, 1, 1],
+      ['PCC Work', 1, 1, 1, 1],
+      ['Brick Work', 1, 1, 1, 1]
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows.map(function (r) { return r.Description; }),
+     ['Excavation - Earth Work', 'PCC Work', 'Brick Work']);
+});
+
+test('header survives blank rows between header and first data row', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      ['Description', 'No.', 'L', 'B', 'D'],
+      ['Excavation'],            // header
+      [],                        // blank row in between
+      [],
+      ['Earth Work', 1, 1, 1, 1],
+      ['PCC Work', 1, 1, 1, 1]
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows.map(function (r) { return r.Description; }),
+     ['Excavation - Earth Work', 'PCC Work']);
+});
+
+test('latest header REPLACES previous pending header (Example 3)', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      ['Description', 'No.', 'L', 'B', 'D'],
+      ['Foundation'],            // header 1
+      ['Excavation'],            // header 2 (replaces "Foundation")
+      ['Earth Work', 1, 1, 1, 1],
+      ['PCC', 1, 1, 1, 1]
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows.map(function (r) { return r.Description; }),
+     ['Excavation - Earth Work', 'PCC']);
+});
+
+test('total / summary rows do not consume the pending header', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      ['Description', 'No.', 'L', 'B', 'D', 'Qty'],
+      ['Excavation', null, null, null, null, null], // header
+      [null, null, null, null, null, 99],            // stray qty-summary
+      ['TOTAL', null, null, null, null, 99],         // stray total
+      ['Earth Work', 1, 1, 1, 1, 1]
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows.length, 1);
+  eq(res.rows[0].Description, 'Excavation - Earth Work');
+});
+
+// ---------------------------------------------------------------------------
 console.log('\nSteel Extract');
 // ---------------------------------------------------------------------------
 
@@ -213,15 +286,108 @@ test('steel respects item-name (grade) filter', function () {
   eq(res.rows[0].Remarks, '10 mm');
 });
 
+test('steel extracts by item number alone when no item name is given', function () {
+  var sheet = {
+    name: 'Steel',
+    rows: [
+      ['Item No. 31 : Reinforcement Fe415'],
+      ['Description', 'No.', 'L', 'B', 'D'],
+      ['8 mm'],
+      ['Bar A', 1, 1, 1, 1],
+      ['Item No. 31 : Reinforcement Fe500'],
+      ['Description', 'No.', 'L', 'B', 'D'],
+      ['10 mm'],
+      ['Bar B', 1, 1, 1, 1]
+    ]
+  };
+  // No itemName supplied -> both Fe415 and Fe500 sections of item 31 are returned.
+  var res = BOQ.extractFromSheets([sheet], { mode: 'steel', itemNumber: '31' });
+  eq(res.rows.map(function (r) { return r.Description; }), ['Bar A', 'Bar B']);
+  eq(res.rows.map(function (r) { return r.Remarks; }), ['8 mm', '10 mm']);
+  res.rows.forEach(function (r) { eq(r.No, 1); eq(r.ItemType, 'Diameter'); });
+});
+
+// ---------------------------------------------------------------------------
+console.log('\nRecordDate handling');
+// ---------------------------------------------------------------------------
+
+test('detects Record Date / Dt / Dated column headers', function () {
+  var variants = ['Date', 'DATE', 'Record Date', 'RecordDate', 'Dt', 'Dated'];
+  variants.forEach(function (label) {
+    var sheet = {
+      name: 'S',
+      rows: [
+        ['Item No. 28'],
+        [label, 'Description', 'No.', 'L', 'B', 'D'],
+        ['15-05-2026', 'Earth Work', 1, 1, 1, 1]
+      ]
+    };
+    var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+    eq(res.rows.length, 1, 'row extracted for header "' + label + '"');
+    eq(res.rows[0].RecordDate, '15-05-2026', 'date read from column "' + label + '"');
+  });
+});
+
+test('carries a single heading date across all subsequent rows', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      ['Date', 'Description', 'No.', 'L', 'B', 'D'],
+      ['15-05-2026', 'Earth Work', 1, 1, 1, 1],
+      [null, 'PCC Work', 1, 1, 1, 1],
+      [null, 'Brick Work', 1, 1, 1, 1]
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows.map(function (r) { return r.RecordDate; }),
+     ['15-05-2026', '15-05-2026', '15-05-2026']);
+});
+
+test('a new date replaces the carried-forward date', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      ['Date', 'Description', 'No.', 'L', 'B', 'D'],
+      ['15-05-2026', 'A', 1, 1, 1, 1],
+      [null, 'B', 1, 1, 1, 1],
+      ['20-05-2026', 'C', 1, 1, 1, 1],
+      [null, 'D', 1, 1, 1, 1]
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows.map(function (r) { return r.RecordDate; }),
+     ['15-05-2026', '15-05-2026', '20-05-2026', '20-05-2026']);
+});
+
+test('converts Excel serial dates (number and numeric string)', function () {
+  var sheet = {
+    name: 'S',
+    rows: [
+      ['Item No. 28'],
+      ['Date', 'Description', 'No.', 'L', 'B', 'D'],
+      [45797, 'A', 1, 1, 1, 1],     // serial number -> 20-05-2025
+      ['45797', 'B', 1, 1, 1, 1]    // serial as text
+    ]
+  };
+  var res = BOQ.extractFromSheets([sheet], { mode: 'basic', itemNumber: '28' });
+  eq(res.rows[0].RecordDate, '20-05-2025', 'serial number converted');
+  eq(res.rows[1].RecordDate, '20-05-2025', 'serial string converted');
+});
+
 // ---------------------------------------------------------------------------
 console.log('\nUnit helpers');
 // ---------------------------------------------------------------------------
 
-test('formatDate strips time in various forms', function () {
+test('formatDate strips time and normalises to DD-MM-YYYY', function () {
   var f = BOQ._internals.formatDate;
   eq(f('15-05-2026 12:00 PM'), '15-05-2026');
-  eq(f('15-05-2026 12:00:30'), '15-05-2026');
-  eq(f('2026-05-15T09:30'), '2026-05-15');
+  eq(f('15-05-2026 00:00:00'), '15-05-2026');
+  eq(f('2026-05-15T00:00:00'), '15-05-2026');       // ISO -> DD-MM-YYYY
+  eq(f('2026-05-15T09:30'), '15-05-2026');
+  eq(f('15/05/2026'), '15-05-2026');                 // slashes -> dashes
+  eq(f('15-May-2026'), '15-05-2026');                // month name
   eq(f(new Date(2026, 4, 15)), '15-05-2026');
   eq(f(''), '');
 });

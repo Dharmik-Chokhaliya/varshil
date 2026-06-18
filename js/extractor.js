@@ -107,10 +107,46 @@
   }
 
   function excelSerialToDate(serial) {
-    // Excel epoch is 1899-12-30; 25569 days between that and the Unix epoch.
-    var ms = Math.round((serial - 25569) * 86400000);
-    var d = new Date(ms);
+    // Excel day 0 is 1899-12-30. Build the date in LOCAL time (start at the
+    // local epoch and add whole days) so that getDate()/getMonth()/getFullYear()
+    // always return the correct calendar date regardless of timezone.
+    var whole = Math.floor(serial);
+    var d = new Date(1899, 11, 30);
+    d.setDate(d.getDate() + whole);
     return isNaN(d.getTime()) ? null : d;
+  }
+
+  var MONTHS = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12
+  };
+
+  function monthNum(name) {
+    var k = String(name).toLowerCase().slice(0, 4);
+    if (MONTHS[k] != null) return MONTHS[k];
+    k = k.slice(0, 3);
+    return MONTHS[k] != null ? MONTHS[k] : null;
+  }
+
+  // Normalise a (time-stripped) date string to DD-MM-YYYY when recognisable.
+  function reformatDateString(s) {
+    var m;
+    // ISO: YYYY-MM-DD
+    m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+    if (m) return pad2(+m[3]) + '-' + pad2(+m[2]) + '-' + m[1];
+    // DD-MM-YYYY (day first – the RA Bill standard)
+    m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+    if (m) return pad2(+m[1]) + '-' + pad2(+m[2]) + '-' + m[3];
+    // DD-MM-YY
+    m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})$/);
+    if (m) { var yy = +m[3]; return pad2(+m[1]) + '-' + pad2(+m[2]) + '-' + (yy < 70 ? 2000 + yy : 1900 + yy); }
+    // DD-MMM-YYYY (e.g. 15-May-2026 / 15 May 2026)
+    m = s.match(/^(\d{1,2})[-/ ]([A-Za-z]{3,9})[-/ ,]+(\d{4})$/);
+    if (m) { var mo = monthNum(m[2]); if (mo) return pad2(+m[1]) + '-' + pad2(mo) + '-' + m[3]; }
+    // MMM DD, YYYY (e.g. May 15, 2026)
+    m = s.match(/^([A-Za-z]{3,9})[-/ ]+(\d{1,2})[-/ ,]+(\d{4})$/);
+    if (m) { var mo2 = monthNum(m[1]); if (mo2) return pad2(+m[2]) + '-' + pad2(mo2) + '-' + m[3]; }
+    return s; // unrecognised – return unchanged
   }
 
   function formatDate(v) {
@@ -121,10 +157,10 @@
     }
 
     if (typeof v === 'number') {
-      // Heuristic: plausible Excel date serials only. Otherwise treat as text.
+      // Plausible Excel date serials only; otherwise leave the number as text.
       if (v > 59 && v < 600000) {
-        var d = excelSerialToDate(v);
-        if (d) return fmtDate(d);
+        var dn = excelSerialToDate(v);
+        if (dn) return fmtDate(dn);
       }
       return String(v);
     }
@@ -132,10 +168,22 @@
     var s = String(v).trim();
     if (!s) return '';
 
-    // Strip a trailing time portion: "15-05-2026 12:00 PM" / "... 12:00:30" / "...T09:30"
-    s = s.replace(/[ T]+\d{1,2}:\d{2}(:\d{2})?\s*([AaPp]\.?\s*[Mm]\.?)?\s*$/, '').trim();
+    // Pure-number text that is an Excel serial date (e.g. "45801")
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      var n = parseFloat(s);
+      if (n > 59 && n < 600000) {
+        var ds = excelSerialToDate(n);
+        if (ds) return fmtDate(ds);
+      }
+      return s;
+    }
 
-    return s;
+    // Strip a trailing time portion in any common form:
+    //   "15-05-2026 12:00 PM", "... 00:00:00", "2026-05-15T00:00:00(.000)(Z)"
+    s = s.replace(/[ T]+\d{1,2}:\d{2}(:\d{2})?(\.\d+)?\s*[Zz]?\s*([AaPp]\.?\s*[Mm]\.?)?\s*$/, '').trim();
+
+    // Normalise to DD-MM-YYYY.
+    return reformatDateString(s);
   }
 
   // -------------------------------------------------------------------------
@@ -173,7 +221,7 @@
     // Item number column
     if (/^(item|item no|item nos|item number|item code|boq no|boq item)$/.test(t)) return 'itemno';
 
-    if (/^(date|dt|dated)$/.test(t)) return 'date';
+    if (/^(date|dt|dated|record date|recorddate|rec date|rec dt|date of record|measurement date|meas date)$/.test(t)) return 'date';
 
     // Measurement "No." / "Nos" (count)
     if (/^(no|nos|no of|nos of|number|qnty no|qty no)$/.test(t)) return 'no';
@@ -343,16 +391,6 @@
   }
 
   // -------------------------------------------------------------------------
-  // Header merge helper
-  // -------------------------------------------------------------------------
-
-  function appendHeader(pending, text) {
-    if (!text) return pending;
-    if (!pending) return text;
-    return pending + ' - ' + text;
-  }
-
-  // -------------------------------------------------------------------------
   // Core extraction
   // -------------------------------------------------------------------------
 
@@ -363,7 +401,8 @@
     if (targetItem === null && !isBlank(options.itemNumber)) {
       targetItem = String(options.itemNumber).trim();
     }
-    var itemNameNorm = mode === 'steel' ? normalize(options.itemName) : '';
+    // Item Name is OPTIONAL for Steel: when omitted, match by item number alone.
+    var itemNameNorm = (mode === 'steel' && !isBlank(options.itemName)) ? normalize(options.itemName) : '';
     var onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
 
     var out = [];
@@ -409,8 +448,8 @@
       var row = rows[r] || [];
 
       if (isEmptyRow(row)) {
-        // Blank rows terminate a pending section header (tables are separated by blanks).
-        pendingHeader = '';
+        // Blank rows do NOT clear a pending header — a header must still reach
+        // the first subsequent data row even across blank separators.
         continue;
       }
 
@@ -481,15 +520,13 @@
       var hasDim = isNumericVal(noVal) || isNumericVal(lVal) || isNumericVal(bVal) || isNumericVal(dVal);
       var hasQty = isNumericVal(qVal);
 
-      // 4. TOTAL / Grand Total / Say rows
+      // 4. TOTAL / Grand Total / Say rows  (skipped, but do not consume a header)
       if (isTotalRow(fullText) || isTotalRow(desc) || isSayRow(desc)) {
-        pendingHeader = '';
         continue;
       }
 
       // 5. Quantity-summary row (only a quantity, no dimensions / no count)
       if (!hasDim && hasQty) {
-        pendingHeader = '';
         continue;
       }
 
@@ -500,39 +537,42 @@
           if (cfg.mode === 'steel') {
             var dia = detectDiameter(desc);
             if (dia && isMostlyDiameter(desc)) {
-              currentDiameter = dia; // pure diameter header -> goes to Remarks, not Description
+              // A pure diameter header feeds Remarks, NOT the description merge,
+              // and must leave any pending section header untouched.
+              currentDiameter = dia;
             } else {
-              pendingHeader = appendHeader(pendingHeader, desc);
+              // Latest header REPLACES any previous pending header.
+              pendingHeader = desc;
               if (dia) currentDiameter = dia;
             }
           } else {
-            pendingHeader = appendHeader(pendingHeader, desc);
+            // Latest header REPLACES any previous pending header.
+            pendingHeader = desc;
           }
         }
         continue;
       }
 
       // 7. Data row -------------------------------------------------------
+      // Header Merge Rule: the FIRST data row after a header consumes it.
+      // Merge once, then clear immediately so it is never reused.
+      var finalDesc = desc;
+      if (pendingHeader) {
+        finalDesc = desc ? (pendingHeader + ' - ' + desc) : pendingHeader;
+        pendingHeader = '';
+      }
+
       // Item-number filter
       if (String(rowItem) !== String(cfg.targetItem)) {
-        pendingHeader = '';
         continue;
       }
 
-      // Steel: item-name (grade) filter
+      // Steel: optional item-name (grade) filter (skipped when no name is given)
       if (cfg.mode === 'steel' && cfg.itemNameNorm) {
         var hay = normalize(sectionText + ' ' + fullText);
         if (hay.indexOf(cfg.itemNameNorm) === -1) {
-          pendingHeader = '';
           continue;
         }
-      }
-
-      // Apply the header merge to the FIRST data row only.
-      var finalDesc = desc;
-      if (pendingHeader) {
-        finalDesc = appendHeader(pendingHeader, desc);
-        pendingHeader = '';
       }
 
       var remarks = '';

@@ -203,7 +203,9 @@
       reader.onload = function (e) {
         try {
           var data = new Uint8Array(e.target.result);
-          var wb = XLSX.read(data, { type: 'array', cellDates: false, raw: false });
+          // cellDates:true → date-formatted cells become JS Date objects (the
+          // engine formats them to DD-MM-YYYY); numbers stay numeric for L/B/D.
+          var wb = XLSX.read(data, { type: 'array', cellDates: true });
           resolve(wb);
         } catch (err) {
           reject(err);
@@ -230,8 +232,7 @@
     var itemNum = els.itemNumberInput.value.trim();
     if (!itemNum) { toast('Please enter an Item Number.', 'error'); els.itemNumberInput.focus(); return; }
     var isSteel = els.modeSteel.checked;
-    var itemName = els.itemNameInput.value.trim();
-    if (isSteel && !itemName) { toast('Please enter an Item Name for Steel Extract.', 'error'); els.itemNameInput.focus(); return; }
+    var itemName = els.itemNameInput.value.trim(); // optional for Steel
 
     clearResults();
     showProgress(true);
